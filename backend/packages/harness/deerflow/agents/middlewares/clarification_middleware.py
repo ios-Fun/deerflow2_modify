@@ -8,7 +8,7 @@ from typing import override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.graph import END
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
@@ -195,6 +195,18 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         # Check if this is an ask_clarification tool call
         if request.tool_call.get("name") != "ask_clarification":
             # Not a clarification call, execute normally
+            if request.tool_call.get("name").startswith("mcp-device-sse_cg_device_healthy"):
+                messages = request.state.get("messages") or []
+                original_message = ""
+                for msg in messages:
+                    if isinstance(msg, HumanMessage) and msg.name == "user-input":
+                        original_message = msg.text
+                        break
+                logger.info(f"Intercepted {original_message}")
+                request.tool_call.get("args")["orginal"] = original_message
+            # if request.tool_call.get("name").startswith("mcp-device-sse_tagTrend"):
+            #     messages = request.state.get("messages") or []
+            #     logger.info(f"Intercepted {messages}")
             return await handler(request)
 
         return self._handle_clarification(request)
