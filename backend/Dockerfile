@@ -50,6 +50,8 @@ COPY backend ./backend
 RUN --mount=type=cache,target=/root/.cache/uv \
     sh -c "cd backend && UV_INDEX_URL=${UV_INDEX_URL:-https://pypi.org/simple} uv sync ${UV_EXTRAS:+--extra $UV_EXTRAS}"
 
+COPY backend/my_pkgs/langchain_mcp_adapters/tools.py /app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py
+
 # UTF-8 locale prevents UnicodeEncodeError on Chinese/emoji content in minimal
 # containers where locale configuration may be missing and the default encoding is not UTF-8.
 ENV LANG=C.UTF-8
