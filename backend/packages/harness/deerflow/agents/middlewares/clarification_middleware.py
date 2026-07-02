@@ -195,8 +195,14 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         # Check if this is an ask_clarification tool call
         if request.tool_call.get("name") != "ask_clarification":
             # Not a clarification call, execute normally
+            if request.tool_call.get("name").startswith("mcp-device-sse"):
+                thread_id = request.runtime.execution_info.thread_id
+                logger.info(f"{request.tool_call.get("name")} -- {thread_id}")
+                request.tool_call.get("args")["thread_id"] = thread_id
+
             if request.tool_call.get("name").startswith("mcp-device-sse_cg_device_healthy"):
                 messages = request.state.get("messages") or []
+
                 original_message = ""
                 for msg in messages:
                     if isinstance(msg, HumanMessage) and msg.name == "user-input":
