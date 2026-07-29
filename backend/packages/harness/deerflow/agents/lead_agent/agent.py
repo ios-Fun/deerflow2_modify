@@ -324,6 +324,12 @@ def build_middlewares(
 
     middlewares.append(DynamicContextMiddleware(agent_name=agent_name, app_config=resolved_app_config))
 
+    # 自定义中间件
+    from deerflow.agents.middlewares.user_input_enrichment_middleware import (
+        UserInputEnrichmentMiddleware,
+    )
+    middlewares.append(UserInputEnrichmentMiddleware())
+
     # Deterministically load a full SKILL.md when the user starts the turn with
     # /skill-name. This keeps the base system prompt metadata-only while giving
     # explicit user activation priority over model-side relevance guessing.
