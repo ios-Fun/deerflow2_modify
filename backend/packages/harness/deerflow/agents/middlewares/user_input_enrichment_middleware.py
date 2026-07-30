@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
-import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.config import get_stream_writer
+
+from deerflow.runtime.secret_context import USER_INPUT_ENRICHMENT_CONTEXT_KEY
+from deerflow.utils.custom_events import emit_custom_event
 
 logger = logging.getLogger(__name__)
 
@@ -28,42 +35,29 @@ def _extract_raw_user_text(text: str) -> str:
     return text.strip()
 
 
-def _latest_user_text(messages: list):
+def _latest_user_message(messages: list) -> HumanMessage | None:
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage) and not msg.additional_kwargs.get("hide_from_ui"):
-            content = msg.content
-            if isinstance(content, str) and content.strip():
-                return _extract_raw_user_text(content)
-            if isinstance(content, list):
-                text_parts = [
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ]
-                joined = " ".join(text_parts).strip()
-                if joined:
-                    return _extract_raw_user_text(joined)
+            return msg
     return None
 
 
-def _latest_user_message_id(messages: list) -> str | None:
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage) and not msg.additional_kwargs.get("hide_from_ui"):
-            return msg.id
+def _user_message_text(message: HumanMessage) -> str | None:
+    content = message.content
+    if isinstance(content, str) and content.strip():
+        return _extract_raw_user_text(content)
+    if isinstance(content, list):
+        text_parts = [block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"]
+        joined = " ".join(text_parts).strip()
+        if joined:
+            return _extract_raw_user_text(joined)
     return None
 
 
-def _already_enriched(messages: list) -> bool:
-    for msg in reversed(messages):
-        if not isinstance(msg, HumanMessage):
-            continue
-        if not msg.additional_kwargs.get("hide_from_ui"):
-            # Reached the latest visible user message without seeing enrichment.
-            return False
-        content = msg.content
-        if isinstance(content, str) and "<user_enrichment>" in content:
-            return True
-    return False
+def _user_message_key(message: HumanMessage, user_text: str) -> str:
+    if message.id:
+        return str(message.id)
+    return hashlib.sha256(user_text.encode("utf-8")).hexdigest()
 
 
 def _tool_result_text(result: Any) -> str:
@@ -139,6 +133,7 @@ async def enrich(user_text: str) -> str:
     # 以mcp示例
     try:
         from deerflow.mcp.cache import initialize_mcp_tools
+
         tools = await initialize_mcp_tools()
     except Exception:
         logger.exception("[UserEnrichment] initialize_mcp_tools failed")
@@ -178,11 +173,7 @@ async def enrich(user_text: str) -> str:
             logger.info("[UserEnrichment] best similarity %.4f < 0.3, skip", similarity)
             return ""
 
-        kept = [
-            item
-            for item in data
-            if isinstance(item, dict) and float(item.get("similarity") or 0.0) >= 0.3
-        ]
+        kept = [item for item in data if isinstance(item, dict) and float(item.get("similarity") or 0.0) >= 0.3]
         if not kept:
             return ""
         return _format_match_knowledge(kept)
@@ -192,59 +183,65 @@ async def enrich(user_text: str) -> str:
 
 
 class UserInputEnrichmentMiddleware(AgentMiddleware):
-    def __init__(self) -> None:
-        super().__init__()
-        self._enriched_for_msg_id: str | None = None
+    """Inject matched entities into model requests without mutating graph state."""
 
-    # 前端步骤里面输出用 + enrich
-    async def abefore_agent(self, state, runtime) -> dict | None:
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse | AIMessage:
+        message = _latest_user_message(list(request.messages))
+        if message is None:
+            return await handler(request)
 
-        messages = list(state.get("messages", []))
-        if not messages:
-            return None
-        if _already_enriched(messages):
-            return None
-
-        msg_id = _latest_user_message_id(messages)
-        if msg_id and msg_id == self._enriched_for_msg_id:
-            return None
-
-        user_text = _latest_user_text(messages)
+        user_text = _user_message_text(message)
         if not user_text:
-            return None
+            return await handler(request)
 
-        logger.info("[UserEnrichment] enriching in before_agent: %s", user_text[:100])
-        self._emit_status("started", user_text)
+        message_key = _user_message_key(message, user_text)
+        context = request.runtime.context if isinstance(request.runtime.context, dict) else None
+        cached = context.get(USER_INPUT_ENRICHMENT_CONTEXT_KEY) if context is not None else None
+        if isinstance(cached, dict) and cached.get("message_key") == message_key:
+            knowledge = cached.get("knowledge")
+            knowledge = knowledge if isinstance(knowledge, str) else ""
+        else:
+            logger.info("[UserEnrichment] enriching model request: %s", user_text[:100])
+            self._emit_status("started", user_text)
+            failed = False
+            try:
+                knowledge = await enrich(user_text)
+            except Exception:
+                logger.exception("[UserEnrichment] enrichment failed")
+                self._emit_status("failed", user_text)
+                knowledge = ""
+                failed = True
 
-        try:
-            # 调用增强方法
-            knowledge = await enrich(user_text)
-        except Exception:
-            logger.exception("[UserEnrichment] enrichment failed")
-            self._emit_status("failed", user_text)
-            return None
+            knowledge = knowledge.strip()
+            if context is not None:
+                context[USER_INPUT_ENRICHMENT_CONTEXT_KEY] = {
+                    "message_key": message_key,
+                    "knowledge": knowledge,
+                }
+            if knowledge:
+                logger.info("[UserEnrichment] injecting knowledge: %s", knowledge)
+                self._emit_status("completed", user_text)
+            elif not failed:
+                logger.info("[UserEnrichment] empty knowledge, skipping injection")
+                self._emit_status("skipped", user_text)
 
-        if not knowledge or not knowledge.strip():
-            logger.info("[UserEnrichment] empty knowledge, skipping injection")
-            self._emit_status("skipped", user_text)
-            return None
-
-        logger.info("[UserEnrichment] injecting knowledge: %s", knowledge)
-        self._enriched_for_msg_id = msg_id
-        self._emit_status("completed", user_text)
+        if not knowledge:
+            return await handler(request)
 
         extra = HumanMessage(
             content="<user_enrichment>\n" + knowledge + "\n</user_enrichment>",
+            id=f"{message_key}__user_enrichment",
             additional_kwargs={"hide_from_ui": True},
         )
-        return {"messages": [extra]}
+        return await handler(request.override(messages=[*request.messages, extra]))
 
     @staticmethod
     def _emit_status(status: str, user_text: str, **kwargs: Any) -> None:
         try:
-            from langgraph.config import get_stream_writer
-            from deerflow.utils.custom_events import emit_custom_event
-
             writer = get_stream_writer()
             payload = {
                 "type": "user_enrichment",

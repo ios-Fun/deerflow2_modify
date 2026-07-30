@@ -31,6 +31,10 @@ ACTIVE_SECRETS_CONTEXT_KEY = "__active_skill_secrets"
 # entire value must be stripped from every observable serialization surface.
 SKILL_TOOL_POLICY_DECISION_CONTEXT_KEY = "__skill_tool_policy_decision"
 
+# Request-only entity enrichment cache. It may contain user-derived text and
+# matched business entities, so keep it off observable context serializations.
+USER_INPUT_ENRICHMENT_CONTEXT_KEY = "__user_input_enrichment"
+
 
 def _string_pairs(raw: Any) -> dict[str, str]:
     if not isinstance(raw, dict):
@@ -110,6 +114,7 @@ REDACTED_CONTEXT_KEYS = frozenset(
         _SECRETS_BINDING_AUDIT_KEY,
         _SLASH_SKILL_ACTIVATION_RUN_KEY,
         SKILL_TOOL_POLICY_DECISION_CONTEXT_KEY,
+        USER_INPUT_ENRICHMENT_CONTEXT_KEY,
     }
 )
 
