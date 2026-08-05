@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import AIMessage
 from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
@@ -13,7 +14,7 @@ from deerflow.agents.memory import get_memory_manager
 from deerflow.config.memory_config import get_memory_config
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.trace_context import DEERFLOW_TRACE_METADATA_KEY, get_current_trace_id, normalize_trace_id
-
+from deerflow.redis.redis_client import memoryRedis1
 if TYPE_CHECKING:
     from deerflow.config.memory_config import MemoryConfig
 
@@ -116,6 +117,18 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         if add_args is None:
             return None
         thread_id, messages, user_id, trace_id = add_args
+        last_msg = messages[-1]
+
+        if isinstance(last_msg, AIMessage):
+            # 查看下 redis对应数据
+            redis_key = f"{thread_id}_result_trend"
+            if memoryRedis1.has_key(redis_key):
+                value = memoryRedis1.get_cache(redis_key)
+                old_value = last_msg.content
+                new_dic = {"msg": old_value, "result_trend": value}
+                last_msg.content = str(new_dic)
+                logger.info(f"last_msg.content:{last_msg.content}")
+
         manager = await asyncio.to_thread(get_memory_manager)
         await manager.aadd(
             thread_id,
