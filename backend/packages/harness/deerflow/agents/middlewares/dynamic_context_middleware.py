@@ -186,7 +186,7 @@ class DynamicContextMiddleware(AgentMiddleware):
             if injection_enabled
             else ""
         )
-        current_date = datetime.now().strftime("%Y-%m-%d, %A")
+        current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
 
         date_reminder = "\n".join(
             [
@@ -201,7 +201,7 @@ class DynamicContextMiddleware(AgentMiddleware):
         return date_reminder, memory_block
 
     def _build_date_update_reminder(self) -> str:
-        current_date = datetime.now().strftime("%Y-%m-%d, %A")
+        current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
         return "\n".join(
             [
                 "<system-reminder>",
@@ -270,7 +270,8 @@ class DynamicContextMiddleware(AgentMiddleware):
         if not messages:
             return None
 
-        current_date = datetime.now().strftime("%Y-%m-%d, %A")
+
+        current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
         last_date = _last_injected_date(messages)
         logger.debug(
             "DynamicContextMiddleware._inject: msg_count=%d last_date=%r current_date=%r",
