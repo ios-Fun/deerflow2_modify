@@ -65,6 +65,7 @@ _SUMMARY_MESSAGE_NAME = "summary"
 # takes the original id so ``add_messages`` can replace it in place.
 INJECTED_USER_MESSAGE_ID_SUFFIX = "__user"
 
+ENABLE_MINUTES = False
 
 def strip_injected_user_message_id_suffix(message_id: str | None) -> str | None:
     """Return the id *message_id* had before the reminder ID-swap.
@@ -186,7 +187,11 @@ class DynamicContextMiddleware(AgentMiddleware):
             if injection_enabled
             else ""
         )
-        current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
+        current_date = None
+        if ENABLE_MINUTES:
+            current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
+        else:
+            current_date = datetime.now().strftime("%Y-%m-%d, %A")
 
         date_reminder = "\n".join(
             [
@@ -201,7 +206,11 @@ class DynamicContextMiddleware(AgentMiddleware):
         return date_reminder, memory_block
 
     def _build_date_update_reminder(self) -> str:
-        current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
+        current_date = None
+        if ENABLE_MINUTES:
+            current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
+        else:
+            current_date = datetime.now().strftime("%Y-%m-%d, %A")
         return "\n".join(
             [
                 "<system-reminder>",
@@ -270,8 +279,11 @@ class DynamicContextMiddleware(AgentMiddleware):
         if not messages:
             return None
 
-
-        current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
+        current_date = None
+        if ENABLE_MINUTES:
+            current_date = datetime.now().strftime("%Y-%m-%d %H:%M, %A")
+        else:
+            current_date = datetime.now().strftime("%Y-%m-%d, %A")
         last_date = _last_injected_date(messages)
         logger.debug(
             "DynamicContextMiddleware._inject: msg_count=%d last_date=%r current_date=%r",
