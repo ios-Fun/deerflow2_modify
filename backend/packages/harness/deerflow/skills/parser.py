@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 # Valid POSIX environment-variable name.
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+FILE_ENCRYPT = False
 
 def _format_yaml_error(skill_file: Path, exc: yaml.YAMLError, source: str) -> str:
     """Render a developer-friendly explanation of a YAML front-matter error."""
@@ -130,7 +131,14 @@ def parse_skill_file(skill_file: Path, category: SkillCategory, relative_path: P
         return None
 
     try:
-        content = skill_file.read_text(encoding="utf-8")
+        if FILE_ENCRYPT:
+            key = '123456'.encode("utf-8")
+            with open(skill_file, "rb") as f:
+                enc_data = f.read()
+            raw_bytes = bytes([byte ^ key[i % len(key)] for i, byte in enumerate(enc_data)])
+            content = raw_bytes.decode("utf-8")
+        else:
+            content = skill_file.read_text(encoding="utf-8")
 
         # Keep parser diagnostics richer than the pure helper's host-path-free
         # error string; tests and authoring UX depend on the line-specific hint.

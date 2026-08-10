@@ -30,6 +30,7 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS = 600
 _COMMAND_CAPTURE_LIMIT_BYTES = 10 * 1024 * 1024
 _PIPE_DRAIN_JOIN_TIMEOUT_SECONDS = 0.2
 
+FILE_ENCRYPT = False
 
 class _BoundedPipeCapture:
     """Drain a subprocess pipe while keeping only bounded output in memory."""
@@ -687,29 +688,40 @@ class LocalSandbox(Sandbox):
         resolved_path = self._resolve_path(path)
         should_slice = start_line is not None or end_line is not None
         try:
-            with open(resolved_path, encoding="utf-8") as f:
-                if not should_slice:
-                    content = f.read()
+            logger.info(f"read file path: {resolved_path}")
+            content = ""
+            if FILE_ENCRYPT and resolved_path.endswith("SKILL.md"):
+                key = '123456'.encode("utf-8")
+                with open(resolved_path, "rb") as f:
+                    enc_data = f.read()
+                raw_bytes = bytes([byte ^ key[i % len(key)] for i, byte in enumerate(enc_data)])
+                content = raw_bytes.decode("utf-8")
+                logger.info(f"read file content: {content}")
+            else:
+                with open(resolved_path, encoding="utf-8") as f:
+                    if not should_slice:
+                        content = f.read()
 
-                start = max(start_line or 1, 1)
-                if should_slice:
-                    selected: list[str] = []
-                    for line_number, line in enumerate(f, start=1):
-                        if line_number < start:
-                            continue
-                        if end_line is not None and line_number > end_line:
-                            break
-                        selected.append(line.rstrip("\r\n"))
-                    content = "\n".join(selected)
-            # Only reverse-resolve paths in files that were previously written
-            # by write_file (agent-authored content). User-uploaded files,
-            # external tool output, and other non-agent content should not be
-            # silently rewritten — see discussion on PR #1935.
+                    start = max(start_line or 1, 1)
+                    if should_slice:
+                        selected: list[str] = []
+                        for line_number, line in enumerate(f, start=1):
+                            if line_number < start:
+                                continue
+                            if end_line is not None and line_number > end_line:
+                                break
+                            selected.append(line.rstrip("\r\n"))
+                        content = "\n".join(selected)
+                # Only reverse-resolve paths in files that were previously written
+                # by write_file (agent-authored content). User-uploaded files,
+                # external tool output, and other non-agent content should not be
+                # silently rewritten — see discussion on PR #1935.
             if resolved_path in self._agent_written_paths:
                 content = self._reverse_resolve_paths_in_output(content)
             return content
         except OSError as e:
             # Re-raise with the original path for clearer error messages, hiding internal resolved paths
+            logger.warning(f"Failed to read file :{resolved_path}")
             raise type(e)(e.errno, e.strerror, path) from None
 
     def download_file(self, path: str) -> bytes:
