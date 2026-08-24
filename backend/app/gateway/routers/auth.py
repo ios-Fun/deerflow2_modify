@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import time
 import urllib.parse
 from ipaddress import ip_address, ip_network
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, 
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from starlette.responses import RedirectResponse
+from deerflow.config.paths import get_paths
 
 from app.gateway.auth import (
     UserResponse,
@@ -308,6 +310,15 @@ async def login_local(
     _record_login_success(client_ip)
     token = create_access_token(str(user.id), token_version=user.token_version)
     _set_session_cookie(response, token, request, remember_me=remember_me)
+
+    # 创建文件夹
+    get_paths().user_dir(str(user.id)).mkdir(parents=True, exist_ok=True)
+
+    user_skill_path = get_paths().user_dir(str(user.id)) / "skills"
+    if not user_skill_path.exists():
+        # 把skill文件夹复制过去
+        orignal_skill_path = get_paths().base_dir / "users" / "skills"
+        shutil.copytree(orignal_skill_path, user_skill_path)
 
     return LoginResponse(
         expires_in=get_auth_config().token_expiry_days * 24 * 3600,
