@@ -317,8 +317,8 @@ async def login_local(
     user_skill_path = get_paths().user_dir(str(user.id)) / "skills"
     if not user_skill_path.exists():
         # 把skill文件夹复制过去
-        orignal_skill_path = get_paths().base_dir / "users" / "skills"
-        shutil.copytree(orignal_skill_path, user_skill_path)
+        original_skill_path = get_paths().base_dir / "users" / "skills"
+        shutil.copytree(original_skill_path, user_skill_path)
 
     return LoginResponse(
         expires_in=get_auth_config().token_expiry_days * 24 * 3600,
